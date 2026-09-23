@@ -1,0 +1,17 @@
+"use client";
+
+import { useEffect,useState } from "react";
+import { useParams } from "next/navigation";
+import Header from "@/components/layout/Header";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/components/auth/AuthProvider";
+
+interface Payout {id:number;teamName:string;teamLeaderName:string;totalApprovedAmount:number|string;payoutRate:number|string;payoutAmount:number|string;status:string;}
+const money=(v:number|string)=>Number(v||0).toLocaleString("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
+export default function PayoutDetail(){const {periodId}=useParams<{periodId:string}>();const {user}=useAuth();const [rows,setRows]=useState<Payout[]>([]);const [error,setError]=useState("");const [working,setWorking]=useState(false);
+ const load=async()=>{try{const r=await apiFetch<{data:Payout[]}>(`/api/payout/periods/${periodId}`);setRows(r.data||[]);}catch(e){setError(e instanceof Error?e.message:"Unable to load payout");}};
+ useEffect(()=>{if(periodId)load();},[periodId]);
+ const calculate=async()=>{try{setWorking(true);setError("");await apiFetch(`/api/payout/periods/${periodId}/calculate`,{method:"POST"});await load();}catch(e){setError(e instanceof Error?e.message:"Unable to calculate payout");}finally{setWorking(false);}};
+ const update=async(id:number,status:string)=>{try{setWorking(true);await apiFetch(`/api/payout/${id}/status`,{method:"PATCH",body:JSON.stringify({status})});await load();}catch(e){setError(e instanceof Error?e.message:"Unable to update payout");}finally{setWorking(false);}};
+ return <div><Header title="Payout Calculation" subtitle="Team Leader payout details"/><main className="p-8">{error&&<div className="mb-5 rounded-lg bg-red-50 border border-red-200 p-4 text-red-700">{error}</div>}<div className="flex justify-end mb-5">{user?.role==="ORG_ADMIN"&&<button disabled={working} onClick={calculate} className="rounded-lg bg-blue-600 px-5 py-2.5 text-white font-semibold disabled:opacity-50">Calculate Payout</button>}</div><div className="bg-white border rounded-xl overflow-hidden"><table className="w-full text-sm"><thead className="bg-slate-50"><tr><th className="p-4 text-left">Team</th><th className="p-4 text-left">Team Leader</th><th className="p-4 text-right">Approved Amount</th><th className="p-4 text-right">Rate</th><th className="p-4 text-right">Payout</th><th className="p-4 text-left">Status</th><th className="p-4 text-left">Action</th></tr></thead><tbody>{rows.length===0?<tr><td colSpan={7} className="p-8 text-center text-slate-500">No calculated payouts yet. Admin can calculate the period.</td></tr>:rows.map(r=><tr key={r.id} className="border-t"><td className="p-4 font-medium">{r.teamName}</td><td className="p-4">{r.teamLeaderName}</td><td className="p-4 text-right">{money(r.totalApprovedAmount)}</td><td className="p-4 text-right">{r.payoutRate}%</td><td className="p-4 text-right font-semibold">{money(r.payoutAmount)}</td><td className="p-4">{r.status}</td><td className="p-4">{user?.role==="ORG_ADMIN"&&r.status==="CALCULATED"&&<button onClick={()=>update(r.id,"REVIEWED")} className="text-blue-600 font-medium">Mark Reviewed</button>}{user?.role==="ORG_ADMIN"&&r.status==="REVIEWED"&&<button onClick={()=>update(r.id,"APPROVED")} className="text-green-600 font-medium">Approve</button>}{user?.role==="ORG_ADMIN"&&r.status==="APPROVED"&&<button onClick={()=>update(r.id,"PAID")} className="text-purple-600 font-medium">Mark Paid</button>}</td></tr>)}</tbody></table></div></main></div>;
+}
