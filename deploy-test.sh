@@ -39,7 +39,7 @@ FRONTEND_PORT="3000"
 DB_NAME_DEFAULT="mis_platform_test"
 DB_USER_DEFAULT="mis_test"
 DB_PASSWORD_DEFAULT=""
-SERVER_NAME_DEFAULT="_"
+SERVER_NAME_DEFAULT="vrs.code19msp.com"
 SUPER_ADMIN_EMAIL_DEFAULT="superadmin@mis.local"
 SUPER_ADMIN_PASSWORD_DEFAULT="Admin@123"
 ADMIN_EMAIL_DEFAULT="admin@mis.local"
@@ -76,8 +76,10 @@ SERVER_NAME="$(auto_input 'Domain name or server IP (use _ for any host)' "${SER
 read -r -p "Reset/recreate test database ${DB_NAME}? [Y/n]: " RESET_DB
 RESET_DB="${RESET_DB:-Y}"
 
-read -r -p "Enable HTTPS with Certbot now? [y/N]: " ENABLE_SSL
-ENABLE_SSL="${ENABLE_SSL:-N}"
+ENABLE_SSL="Y"
+
+# vrs.code19msp.com already has a Let's Encrypt certificate on this server.
+# We reuse that certificate and do NOT run Certbot or replace the existing certificate.
 
 read -r -p "Create/reset test ORG_ADMIN (${ADMIN_EMAIL_DEFAULT})? [Y/n]: " CREATE_ADMIN
 CREATE_ADMIN="${CREATE_ADMIN:-Y}"
@@ -182,7 +184,7 @@ if [[ "${SERVER_NAME}" == "_" ]]; then
     SERVER_IP="$(hostname -I | awk '{print $1}')"
     FRONTEND_API_URL="http://${SERVER_IP}"
 else
-    FRONTEND_API_URL="http://${SERVER_NAME}"
+    FRONTEND_API_URL="https://${SERVER_NAME}"
 fi
 
 cat > "${APP_ROOT}/frontend/.env.local" <<EOF
@@ -272,15 +274,48 @@ fi
 pm2 save
 
 # ---------- Nginx ----------
-log "Configuring Nginx"
-cat > /etc/nginx/sites-available/mis-platform <<EOF
+log "Configuring Nginx for ${SERVER_NAME}"
+
+if [[ "${SERVER_NAME}" != "vrs.code19msp.com" ]]; then
+    warn "This deployment script is configured for vrs.code19msp.com."
+    warn "The current Nginx configuration will only be safely replaced for that hostname."
+    fail "Use SERVER_NAME=vrs.code19msp.com for this deployment."
+fi
+
+# Back up the existing VRS Nginx configuration before repurposing the hostname.
+if [[ -f /etc/nginx/sites-available/vrs.code19msp.com ]]; then
+    BACKUP_FILE="/etc/nginx/sites-available/vrs.code19msp.com.pre-mis.$(date +%Y%m%d%H%M%S)"
+    cp /etc/nginx/sites-available/vrs.code19msp.com "${BACKUP_FILE}"
+    log "Backed up existing VRS Nginx config to ${BACKUP_FILE}"
+fi
+
+# The existing vrs.code19msp.com certificate is reused.
+CERT_DIR="/etc/letsencrypt/live/vrs.code19msp.com"
+[[ -f "${CERT_DIR}/fullchain.pem" ]] || fail "Existing TLS certificate not found: ${CERT_DIR}/fullchain.pem"
+[[ -f "${CERT_DIR}/privkey.pem" ]] || fail "Existing TLS private key not found: ${CERT_DIR}/privkey.pem"
+
+cat > /etc/nginx/sites-available/vrs.code19msp.com <<EOF
 server {
     listen 80;
     listen [::]:80;
-    server_name ${SERVER_NAME};
+    server_name vrs.code19msp.com;
+
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name vrs.code19msp.com;
+
+    ssl_certificate ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
     client_max_body_size 100M;
 
+    # Express API
     location /api/ {
         proxy_pass http://127.0.0.1:${BACKEND_PORT}/api/;
         proxy_http_version 1.1;
@@ -291,6 +326,7 @@ server {
         proxy_read_timeout 120s;
     }
 
+    # Next.js frontend
     location / {
         proxy_pass http://127.0.0.1:${FRONTEND_PORT};
         proxy_http_version 1.1;
@@ -300,24 +336,18 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_read_timeout 120s;
     }
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/mis-platform /etc/nginx/sites-enabled/mis-platform
-rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/vrs.code19msp.com /etc/nginx/sites-enabled/vrs.code19msp.com
 nginx -t
 systemctl enable nginx
-systemctl restart nginx
+systemctl reload nginx
 
-# ---------- Optional HTTPS ----------
-if [[ "${ENABLE_SSL}" =~ ^[Yy]$ && "${SERVER_NAME}" != "_" ]]; then
-    log "Installing Certbot and requesting HTTPS certificate"
-    apt-get install -y certbot python3-certbot-nginx
-    certbot --nginx --non-interactive --agree-tos --redirect \
-        -m "admin@${SERVER_NAME}" \
-        -d "${SERVER_NAME}"
-fi
+# ---------- HTTPS ----------
+# HTTPS is already configured for vrs.code19msp.com. Do not invoke Certbot here.
 
 # ---------- Health checks ----------
 log "Checking backend directly"
@@ -333,7 +363,7 @@ grep -q '"success":true' /tmp/mis-health.json || fail "Backend reported an unhea
 
 log "Checking Nginx/frontend"
 for i in {1..20}; do
-    if curl -fsS "http://127.0.0.1/" >/tmp/mis-home.html 2>/dev/null; then
+    if curl -kfsS --resolve "${SERVER_NAME}:443:127.0.0.1" "https://${SERVER_NAME}/" >/tmp/mis-home.html 2>/dev/null; then
         break
     fi
     sleep 2
@@ -345,10 +375,7 @@ test -s /tmp/mis-home.html || fail "Frontend/Nginx health check failed"
 log "PM2 status"
 pm2 status
 
-SERVER_URL="${FRONTEND_API_URL}"
-if [[ "${ENABLE_SSL}" =~ ^[Yy]$ && "${SERVER_NAME}" != "_" ]]; then
-    SERVER_URL="https://${SERVER_NAME}"
-fi
+SERVER_URL="https://${SERVER_NAME}"
 
 echo
 printf '%s\n' '============================================================'
