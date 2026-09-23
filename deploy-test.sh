@@ -5,9 +5,10 @@ set -Eeuo pipefail
 # MIS Platform - Linux Unit-Test Deployment Script
 #
 # Usage:
-#   Run this script from the Git repository root that already contains:
-#       backend/
-#       frontend/
+#   Run this script from the Git repository root that already contains the
+#   configured backend/frontend directories.
+#   Override folder names with environment variables if required:
+#       BACKEND_DIR=mis_backend FRONTEND_DIR=mis_frontend ./deploy-test.sh
 #
 #   chmod +x deploy-test.sh
 #   sudo ./deploy-test.sh
@@ -32,6 +33,10 @@ set -Eeuo pipefail
 APP_NAME="mis-platform"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="${SCRIPT_DIR}"
+BACKEND_DIR="${BACKEND_DIR:-mis_backend}"
+FRONTEND_DIR="${FRONTEND_DIR:-mis_frontend}"
+BACKEND_PATH="${APP_ROOT}/${BACKEND_DIR}"
+FRONTEND_PATH="${APP_ROOT}/${FRONTEND_DIR}"
 BACKEND_PORT="5001"
 FRONTEND_PORT="3000"
 
@@ -152,17 +157,19 @@ SQL
 fi
 
 # ---------- Verify Git checkout ----------
-[[ -d "${APP_ROOT}/backend" ]] || fail "backend directory not found. Run this script from the Git repository root."
-[[ -d "${APP_ROOT}/frontend" ]] || fail "frontend directory not found. Run this script from the Git repository root."
-[[ -f "${APP_ROOT}/backend/package.json" ]] || fail "backend/package.json not found."
-[[ -f "${APP_ROOT}/frontend/package.json" ]] || fail "frontend/package.json not found."
+[[ -d "${BACKEND_PATH}" ]] || fail "Backend directory not found: ${BACKEND_PATH}"
+[[ -d "${FRONTEND_PATH}" ]] || fail "Frontend directory not found: ${FRONTEND_PATH}"
+[[ -f "${BACKEND_PATH}/package.json" ]] || fail "${BACKEND_PATH}/package.json not found."
+[[ -f "${FRONTEND_PATH}/package.json" ]] || fail "${FRONTEND_PATH}/package.json not found."
 
 log "Using existing Git checkout: ${APP_ROOT}"
+log "Backend directory: ${BACKEND_DIR}"
+log "Frontend directory: ${FRONTEND_DIR}"
 
 # ---------- Backend environment ----------
 log "Creating backend environment"
 JWT_SECRET="$(openssl rand -hex 48)"
-cat > "${APP_ROOT}/backend/.env" <<EOF
+cat > "${BACKEND_PATH}/.env" <<EOF
 PORT=${BACKEND_PORT}
 DB_HOST=localhost
 DB_PORT=3306
@@ -175,7 +182,7 @@ SUPER_ADMIN_EMAIL=${SUPER_ADMIN_EMAIL_DEFAULT}
 SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD_DEFAULT}
 SUPER_ADMIN_NAME=Platform Super Admin
 EOF
-chmod 600 "${APP_ROOT}/backend/.env"
+chmod 600 "${BACKEND_PATH}/.env"
 
 # ---------- Frontend environment ----------
 log "Creating frontend environment"
@@ -187,18 +194,18 @@ else
     FRONTEND_API_URL="https://${SERVER_NAME}"
 fi
 
-cat > "${APP_ROOT}/frontend/.env.local" <<EOF
+cat > "${FRONTEND_PATH}/.env.local" <<EOF
 NEXT_PUBLIC_API_URL=${FRONTEND_API_URL}
 EOF
 
 # ---------- Install backend dependencies ----------
 log "Installing backend dependencies"
-cd "${APP_ROOT}/backend"
+cd "${BACKEND_PATH}"
 npm ci --omit=dev
 
 # ---------- Database migrations ----------
 log "Running database migrations"
-MIGRATION_DIR="${APP_ROOT}/backend/database/migrations"
+MIGRATION_DIR="${BACKEND_PATH}/database/migrations"
 TEMP_MIGRATION_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_MIGRATION_DIR}"' EXIT
 
@@ -206,7 +213,9 @@ trap 'rm -rf "${TEMP_MIGRATION_DIR}"' EXIT
 for migration in "${MIGRATION_DIR}"/*.sql; do
     [[ -f "${migration}" ]] || continue
     migration_name="$(basename "${migration}")"
-    sed "s/`mis_platform`/`${DB_NAME}`/g; s/USE mis_platform;/USE ${DB_NAME};/g" \
+    OLD_DB_BACKTICK="`mis_platform`"
+    NEW_DB_BACKTICK="`${DB_NAME}`"
+    sed "s|${OLD_DB_BACKTICK}|${NEW_DB_BACKTICK}|g; s|USE mis_platform;|USE ${DB_NAME};|g" \
         "${migration}" > "${TEMP_MIGRATION_DIR}/${migration_name}"
 done
 
@@ -238,14 +247,14 @@ fi
 
 # ---------- Backend syntax checks ----------
 log "Checking backend JavaScript syntax"
-find "${APP_ROOT}/backend/src" -type f -name '*.js' -print0 \
+find "${BACKEND_PATH}/src" -type f -name '*.js' -print0 \
     | xargs -0 -n1 node --check
-node --check "${APP_ROOT}/backend/create-admin.js"
-node --check "${APP_ROOT}/backend/create-super-admin.js"
+node --check "${BACKEND_PATH}/create-admin.js"
+node --check "${BACKEND_PATH}/create-super-admin.js"
 
 # ---------- Frontend dependencies/build ----------
 log "Installing frontend dependencies"
-cd "${APP_ROOT}/frontend"
+cd "${FRONTEND_PATH}"
 npm ci
 
 log "Building frontend"
@@ -258,11 +267,11 @@ cd "${APP_ROOT}"
 pm2 delete mis-backend >/dev/null 2>&1 || true
 pm2 delete mis-frontend >/dev/null 2>&1 || true
 
-cd "${APP_ROOT}/backend"
-pm2 start src/app.js --name mis-backend --cwd "${APP_ROOT}/backend"
+cd "${BACKEND_PATH}"
+pm2 start src/app.js --name mis-backend --cwd "${BACKEND_PATH}"
 
-cd "${APP_ROOT}/frontend"
-pm2 start npm --name mis-frontend --cwd "${APP_ROOT}/frontend" -- start
+cd "${FRONTEND_PATH}"
+pm2 start npm --name mis-frontend --cwd "${FRONTEND_PATH}" -- start
 
 pm2 save
 
