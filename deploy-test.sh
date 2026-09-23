@@ -5,16 +5,17 @@ set -Eeuo pipefail
 # MIS Platform - Linux Unit-Test Deployment Script
 #
 # Usage:
-#   1. Put this script and the latest MIS platform ZIP in the
-#      same directory on the Linux server.
-#   2. chmod +x deploy-test.sh
-#   3. sudo ./deploy-test.sh
+#   Run this script from the Git repository root that already contains:
+#       backend/
+#       frontend/
+#
+#   chmod +x deploy-test.sh
+#   sudo ./deploy-test.sh
 #
 # The script performs, in order:
 #   - OS package installation
 #   - Node.js LTS installation/check
 #   - MySQL database/user creation
-#   - Application extraction
 #   - Backend .env creation
 #   - Frontend .env.local creation
 #   - Database migrations in sorted order
@@ -24,16 +25,17 @@ set -Eeuo pipefail
 #   - Nginx reverse proxy setup
 #   - Health checks
 #
-# This is intended for a FRESH/UNIT-TEST environment.
+# The application is NOT copied, extracted, or downloaded by this script.
+# It deploys the backend/ and frontend/ already present in this Git checkout.
 # ============================================================
 
 APP_NAME="mis-platform"
-APP_ROOT="/var/www/${APP_NAME}"
-BACKUP_ROOT="/var/backups/${APP_NAME}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="${SCRIPT_DIR}"
 BACKEND_PORT="5001"
 FRONTEND_PORT="3000"
 
-# ---------- Defaults (edit these if you want non-interactive deployment) ----------
+# ---------- Defaults ----------
 DB_NAME_DEFAULT="mis_platform_test"
 DB_USER_DEFAULT="mis_test"
 DB_PASSWORD_DEFAULT=""
@@ -48,24 +50,6 @@ warn() { echo -e "\n[WARN] $*"; }
 fail() { echo -e "\n[ERROR] $*" >&2; exit 1; }
 
 trap 'echo -e "\n[ERROR] Deployment failed at line $LINENO. Check the output above." >&2' ERR
-
-if [[ "${EUID}" -ne 0 ]]; then
-    fail "Run this script with sudo/root: sudo ./deploy-test.sh"
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ---------- Find application ZIP ----------
-APP_ZIP="${1:-}"
-if [[ -z "${APP_ZIP}" ]]; then
-    APP_ZIP="$(find "${SCRIPT_DIR}" -maxdepth 1 -type f -name '*.zip' ! -name '*deploy*' | head -n 1 || true)"
-fi
-
-if [[ -z "${APP_ZIP}" || ! -f "${APP_ZIP}" ]]; then
-    fail "Application ZIP not found. Put the latest MIS platform ZIP beside this script or run: sudo ./deploy-test.sh /path/to/app.zip"
-fi
-
-APP_ZIP="$(readlink -f "${APP_ZIP}")"
 
 # ---------- Configuration ----------
 echo
@@ -106,7 +90,7 @@ export DEBIAN_FRONTEND=noninteractive
 # ---------- OS packages ----------
 log "Installing required OS packages"
 apt-get update
-apt-get install -y ca-certificates curl gnupg unzip nginx mysql-server openssl rsync
+apt-get install -y ca-certificates curl gnupg nginx mysql-server openssl
 
 # ---------- Node.js LTS ----------
 if command -v node >/dev/null 2>&1; then
@@ -144,63 +128,34 @@ systemctl enable --now mysql
 [[ "${DB_USER}" =~ ^[A-Za-z0-9_]+$ ]] || fail "Invalid database user: ${DB_USER}"
 
 log "Preparing MySQL database ${DB_NAME}"
+# Escape single quotes in the database password for SQL string literals.
+DB_PASSWORD_SQL=$(printf '%s' "${DB_PASSWORD}" | sed "s/'/''/g")
 if [[ "${RESET_DB}" =~ ^[Yy]$ ]]; then
     mysql <<SQL
 DROP DATABASE IF EXISTS \`${DB_NAME}\`;
 CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 DROP USER IF EXISTS '${DB_USER}'@'localhost';
-CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD//'/''}';
+CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD_SQL}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 else
     mysql <<SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD//'/''}';
-ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD//'/''}';
+CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD_SQL}';
+ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD_SQL}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 fi
 
-# ---------- Extract application ----------
-log "Preparing application directory"
-mkdir -p "${BACKUP_ROOT}"
+# ---------- Verify Git checkout ----------
+[[ -d "${APP_ROOT}/backend" ]] || fail "backend directory not found. Run this script from the Git repository root."
+[[ -d "${APP_ROOT}/frontend" ]] || fail "frontend directory not found. Run this script from the Git repository root."
+[[ -f "${APP_ROOT}/backend/package.json" ]] || fail "backend/package.json not found."
+[[ -f "${APP_ROOT}/frontend/package.json" ]] || fail "frontend/package.json not found."
 
-if [[ -d "${APP_ROOT}" ]]; then
-    BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d_%H%M%S)"
-    log "Backing up existing application to ${BACKUP_DIR}"
-    mkdir -p "${BACKUP_DIR}"
-    rsync -a --exclude node_modules --exclude .next "${APP_ROOT}/" "${BACKUP_DIR}/"
-fi
-
-rm -rf "${APP_ROOT}.new"
-mkdir -p "${APP_ROOT}.new"
-unzip -q "${APP_ZIP}" -d "${APP_ROOT}.new"
-
-# Normalize ZIP layouts. Current project ZIP has a top-level mis_work directory.
-if [[ -d "${APP_ROOT}.new/mis_work/backend" && -d "${APP_ROOT}.new/mis_work/frontend" ]]; then
-    mv "${APP_ROOT}.new/mis_work/backend" "${APP_ROOT}.new/backend"
-    mv "${APP_ROOT}.new/mis_work/frontend" "${APP_ROOT}.new/frontend"
-fi
-
-# If the ZIP itself contains a single project directory, normalize it.
-if [[ ! -d "${APP_ROOT}.new/backend" || ! -d "${APP_ROOT}.new/frontend" ]]; then
-    CANDIDATE="$(find "${APP_ROOT}.new" -mindepth 1 -maxdepth 2 -type d -name backend | head -n 1 || true)"
-    if [[ -n "${CANDIDATE}" ]]; then
-        PROJECT_DIR="$(dirname "${CANDIDATE}")"
-        if [[ -d "${PROJECT_DIR}/frontend" ]]; then
-            mv "${PROJECT_DIR}/backend" "${APP_ROOT}.new/backend"
-            mv "${PROJECT_DIR}/frontend" "${APP_ROOT}.new/frontend"
-        fi
-    fi
-fi
-
-[[ -d "${APP_ROOT}.new/backend" ]] || fail "backend directory not found in application ZIP"
-[[ -d "${APP_ROOT}.new/frontend" ]] || fail "frontend directory not found in application ZIP"
-
-rm -rf "${APP_ROOT}"
-mv "${APP_ROOT}.new" "${APP_ROOT}"
+log "Using existing Git checkout: ${APP_ROOT}"
 
 # ---------- Backend environment ----------
 log "Creating backend environment"
