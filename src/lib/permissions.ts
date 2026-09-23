@@ -15,7 +15,8 @@ export type Permission =
     | "users.manage"
     | "organization.manage"
     | "payout.view"
-    | "payout.manage";
+    | "payout.manage"
+    | "reports.view";
 
 
 const rolePermissions: Record<
@@ -31,7 +32,8 @@ const rolePermissions: Record<
         "users.manage",
         "organization.manage",
         "payout.view",
-        "payout.manage"
+        "payout.manage",
+        "reports.view"
     ],
 
     ORG_ADMIN: [
@@ -42,7 +44,8 @@ const rolePermissions: Record<
         "users.manage",
         "organization.manage",
         "payout.view",
-        "payout.manage"
+        "payout.manage",
+        "reports.view"
     ],
 
     MANAGEMENT: [

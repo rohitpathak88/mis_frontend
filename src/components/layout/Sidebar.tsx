@@ -158,6 +158,12 @@ export default function Sidebar() {
             icon: <PayoutIcon />
         },
         {
+            label: "Reports",
+            href: "/reports",
+            permission: "reports.view",
+            icon: <MisIcon />
+        },
+        {
             label: "Users",
             href: "/users",
             permission: "users.view",
