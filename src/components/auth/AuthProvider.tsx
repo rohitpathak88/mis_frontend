@@ -16,6 +16,8 @@ import {
     type CurrentUser,
 } from "@/lib/auth";
 
+import { clearActiveOrganizationId } from "@/lib/organization-context";
+
 import {
     hasPermission as checkPermission,
     type Permission,
@@ -70,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const logout = () => {
         removeToken();
+        clearActiveOrganizationId();
         setUser(null);
         window.location.href = "/login";
     };

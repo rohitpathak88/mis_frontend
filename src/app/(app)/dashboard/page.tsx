@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
     BarChart,
     Bar,
@@ -18,6 +19,8 @@ import {
 import Header from "@/components/layout/Header";
 import { apiFetch } from "@/lib/api";
 import { DashboardData } from "@/types/mis";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { getActiveOrganizationId } from "@/lib/organization-context";
 
 function formatCurrency(value: number | string) {
 
@@ -31,6 +34,8 @@ function formatCurrency(value: number | string) {
 
 export default function DashboardPage() {
 
+    const router = useRouter();
+    const { user, loading: authLoading } = useAuth();
     const [dashboard, setDashboard] =
         useState<DashboardData | null>(null);
 
@@ -71,10 +76,13 @@ export default function DashboardPage() {
     }
 
     useEffect(() => {
-
+        if (authLoading || !user) return;
+        if (user.role === "SUPER_ADMIN" && !getActiveOrganizationId()) {
+            router.replace("/organizations");
+            return;
+        }
         loadDashboard();
-
-    }, [month]);
+    }, [month, user, authLoading, router]);
 
     if (loading) {
 

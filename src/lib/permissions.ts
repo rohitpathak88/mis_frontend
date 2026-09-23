@@ -54,7 +54,8 @@ const rolePermissions: Record<
     DEPARTMENT_HEAD: [
         "dashboard.view",
         "mis.view",
-        "mis.import"
+        "mis.import",
+        "payout.view"
     ],
 
     TEAM_LEADER: [
@@ -66,12 +67,14 @@ const rolePermissions: Record<
 
     MIS_USER: [
         "dashboard.view",
-        "mis.view"
+        "mis.view",
+        "payout.view"
     ],
 
     VIEWER: [
         "dashboard.view",
-        "mis.view"
+        "mis.view",
+        "payout.view"
     ]
 };
 

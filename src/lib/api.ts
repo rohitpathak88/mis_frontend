@@ -51,8 +51,29 @@ export async function apiFetch<T>(
         }
     }
 
+    let requestEndpoint = endpoint;
+
+    // SUPER_ADMIN organization context is carried by the API query string.
+    // Regular users never send a client-selected organization.
+    if (typeof window !== "undefined" && !endpoint.startsWith("/api/organizations")) {
+        const token = localStorage.getItem("mis_token");
+        const activeOrganizationId = localStorage.getItem("mis_active_organization_id");
+
+        if (token && activeOrganizationId) {
+            try {
+                const payload = JSON.parse(atob(token.split(".")[1] || ""));
+                if (payload.role === "SUPER_ADMIN") {
+                    const separator = requestEndpoint.includes("?") ? "&" : "?";
+                    requestEndpoint += `${separator}organizationId=${encodeURIComponent(activeOrganizationId)}`;
+                }
+            } catch {
+                // Invalid token will be handled by the API authentication layer.
+            }
+        }
+    }
+
     const response = await fetch(
-        `${API_URL}${endpoint}`,
+        `${API_URL}${requestEndpoint}`,
         {
             ...fetchOptions,
             headers: requestHeaders,

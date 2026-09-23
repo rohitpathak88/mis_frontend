@@ -164,6 +164,12 @@ export default function Sidebar() {
             icon: <UsersIcon />
         },
         {
+            label: "Organizations",
+            href: "/organizations",
+            permission: "organization.manage",
+            icon: <OrganizationIcon />
+        },
+        {
             label: "Organization",
             href: "/organization",
             permission: "organization.manage",
@@ -171,9 +177,12 @@ export default function Sidebar() {
         }
     ];
 
-    const visibleMenuItems = menuItems.filter(
-        (item) => hasPermission(item.permission)
-    );
+    const visibleMenuItems = menuItems.filter((item) => {
+        if (!hasPermission(item.permission)) return false;
+        if (item.href === "/organizations") return user?.role === "SUPER_ADMIN";
+        if (item.href === "/organization") return user?.role !== "SUPER_ADMIN";
+        return true;
+    });
 
     const isActive = (href: string) => {
         if (href === "/dashboard") {

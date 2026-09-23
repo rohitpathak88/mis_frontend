@@ -5,7 +5,7 @@ export interface CurrentUser {
     id: number;
     name: string;
     email: string;
-    organizationId: number;
+    organizationId: number | null;
     role: UserRole;
 
     department: {
