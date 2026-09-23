@@ -41,9 +41,9 @@ BACKEND_PORT="5001"
 FRONTEND_PORT="3000"
 
 # ---------- Defaults ----------
-DB_NAME_DEFAULT="mis_platform_test"
+DB_NAME_DEFAULT="mis_platform"
 DB_USER_DEFAULT="mis_test"
-DB_PASSWORD_DEFAULT=""
+DB_PASSWORD_DEFAULT="MIS_Test@2026@DbSecure"
 SERVER_NAME_DEFAULT="vrs.code19msp.com"
 SUPER_ADMIN_EMAIL_DEFAULT="superadmin@mis.local"
 SUPER_ADMIN_PASSWORD_DEFAULT="Admin@123"
@@ -205,18 +205,19 @@ npm ci --omit=dev
 
 # ---------- Database migrations ----------
 log "Running database migrations"
-MIGRATION_DIR="${BACKEND_PATH}/database/migrations"
+MIGRATIONS_DIR="${APP_ROOT}/${BACKEND_DIR}/database/migrations"
 TEMP_MIGRATION_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_MIGRATION_DIR}"' EXIT
 
 # Migration 001 hardcodes the original database name. Replace it for the test DB.
-for migration in "${MIGRATION_DIR}"/*.sql; do
-    [[ -f "${migration}" ]] || continue
-    migration_name="$(basename "${migration}")"
-    OLD_DB_BACKTICK="`mis_platform`"
-    NEW_DB_BACKTICK="`${DB_NAME}`"
-    sed "s|${OLD_DB_BACKTICK}|${NEW_DB_BACKTICK}|g; s|USE mis_platform;|USE ${DB_NAME};|g" \
-        "${migration}" > "${TEMP_MIGRATION_DIR}/${migration_name}"
+for migration in "${MIGRATIONS_DIR}"/*.sql; do
+    echo "[INFO] Running migration: $(basename "$migration")"
+
+    mysql \
+        -u"${DB_USER}" \
+        -p"${DB_PASSWORD}" \
+        "${DB_NAME}" \
+        < "${migration}"
 done
 
 for migration in "${TEMP_MIGRATION_DIR}"/*.sql; do
